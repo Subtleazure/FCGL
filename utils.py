@@ -13,6 +13,7 @@ from torch_geometric.nn.conv import GCNConv
 from torch.nn import init
 from torch.utils.data import Dataset
 
+
 class GraphGenerator(nn.Module):
     def __init__(self, nz=128, hidden_dim=256, feat_dim=64, num_classes=7, max_nodes=128, temperature=1.0):
         super(GraphGenerator, self).__init__()
@@ -43,7 +44,8 @@ class GraphGenerator(nn.Module):
         )
 
         # Attention-based edge generator
-        self.attention = nn.MultiheadAttention(embed_dim=feat_dim, num_heads=4, batch_first=True)
+        self.attention = nn.MultiheadAttention(
+            embed_dim=feat_dim, num_heads=4, batch_first=True)
         self.edge_threshold = nn.Parameter(torch.tensor(0.5))  # 可学习阈值
 
         # Node number predictor
@@ -79,8 +81,10 @@ class GraphGenerator(nn.Module):
 
         # Use attention to compute edge scores
         x_for_attn = x  # [B, N, feat_dim]
-        attn_weights, _ = self.attention(x_for_attn, x_for_attn, x_for_attn)  # [B, N, N]
-        attn_weights = torch.sigmoid(attn_weights.mean(dim=1))  # 平均多头 [B, N, N]
+        attn_weights, _ = self.attention(
+            x_for_attn, x_for_attn, x_for_attn)  # [B, N, N]
+        attn_weights = torch.sigmoid(
+            attn_weights.mean(dim=1))  # 平均多头 [B, N, N]
 
         # Apply threshold to get sparse edges
         threshold = torch.sigmoid(self.edge_threshold)
@@ -96,17 +100,21 @@ class GraphGenerator(nn.Module):
                 y_i = torch.randint(0, self.num_classes, (num_n,))
             elif label_distribution == 'balanced':
                 # 尽可能平衡分配
-                class_ids = np.array([i % self.num_classes for i in range(num_n)])
+                class_ids = np.array(
+                    [i % self.num_classes for i in range(num_n)])
                 np.random.shuffle(class_ids)
                 y_i = torch.tensor(class_ids, dtype=torch.long)
             else:
-                raise ValueError("label_distribution must be 'random' or 'balanced'")
+                raise ValueError(
+                    "label_distribution must be 'random' or 'balanced'")
 
             # Extract edges
             adj_i = edge_mask[i, :num_n, :num_n]
-            edge_index = (adj_i > 0).nonzero(as_tuple=False).t().contiguous()  # [2, E]
+            edge_index = (adj_i > 0).nonzero(
+                as_tuple=False).t().contiguous()  # [2, E]
 
-            data_list.append(Data(x=x_i, edge_index=edge_index, y=y_i, num_nodes=num_n))
+            data_list.append(
+                Data(x=x_i, edge_index=edge_index, y=y_i, num_nodes=num_n))
 
         return Batch.from_data_list(data_list)
 
@@ -131,7 +139,8 @@ class GraphSynthesizer:
         self.args = args
         self.iterations = iterations
         # Optimizer for generator and latent codes
-        self.meta_optimizer = torch.optim.Adam(self.generator.parameters(), lr=self.lr_g * 100, betas=(0.5, 0.999))
+        self.meta_optimizer = torch.optim.Adam(
+            self.generator.parameters(), lr=self.lr_g * 100, betas=(0.5, 0.999))
 
     def synthesize(self, targets=None):
         self.ep += 1
@@ -141,7 +150,8 @@ class GraphSynthesizer:
         best_graphs = None
 
         # Latent code
-        z = torch.randn(self.synthesis_batch_size, self.nz, requires_grad=True, device=self.device)
+        z = torch.randn(self.synthesis_batch_size, self.nz,
+                        requires_grad=True, device=self.device)
         optimizer = torch.optim.Adam([
             {'params': self.generator.parameters(), 'lr': self.lr_g},
             {'params': [z], 'lr': self.lr_z}
@@ -164,7 +174,8 @@ class GraphSynthesizer:
                     t_logits = t_out["logits"]
                     soft_labels = F.softmax(t_logits / self.kd_T, dim=1)
             else:
-                soft_labels = F.one_hot(targets, num_classes=self.num_classes).float().to(self.device)
+                soft_labels = F.one_hot(
+                    targets, num_classes=self.num_classes).float().to(self.device)
 
             # 学生模型推理
             s_out = self.student(synth_graphs)
@@ -188,7 +199,8 @@ class GraphSynthesizer:
 
             if loss.item() < best_loss:
                 best_loss = loss.item()
-                best_graphs = synth_graphs.clone().to(f'cuda:{self.args.gpuid}')
+                best_graphs = synth_graphs.clone().to(
+                    f'cuda:{self.args.gpuid}')
 
         # REPTILE-style 更新 generator
         if self.ep >= self.warmup:
@@ -202,7 +214,8 @@ class GraphSynthesizer:
         # 保存到池
         # self.data_pool.append(best_graphs)
         return best_graphs
-    
+
+
 def kd_train(student, teacher, graph_batch_iter, criterion, optimizer, device, epochs=200):
     student.train()
     teacher.eval()
@@ -222,10 +235,11 @@ def kd_train(student, teacher, graph_batch_iter, criterion, optimizer, device, e
         optimizer.step()
 
 
-def kldiv( logits, targets, T=1.0, reduction='batchmean'):
+def kldiv(logits, targets, T=1.0, reduction='batchmean'):
     q = F.log_softmax(logits/T, dim=1)
-    p = F.softmax( targets/T, dim=1 )
-    return F.kl_div( q, p, reduction=reduction ) * (T*T)
+    p = F.softmax(targets/T, dim=1)
+    return F.kl_div(q, p, reduction=reduction) * (T*T)
+
 
 class KLDiv(nn.Module):
     def __init__(self, T=1.0, reduction='batchmean'):
@@ -242,6 +256,7 @@ def gcn_weight_init(m):
     if m.lin.bias is not None:
         init.constant_(m.lin.bias.data, 0)
 
+
 class GraphDataset(Dataset):
     def __init__(self, graph_list):
         """
@@ -256,19 +271,21 @@ class GraphDataset(Dataset):
     def __getitem__(self, idx):
         return self.graph_list[idx]
 
+
 class DataIter(object):
     def __init__(self, dataloader):
         self.dataloader = dataloader
         self._iter = iter(self.dataloader)
-    
+
     def next(self):
         try:
-            data = next( self._iter )
+            data = next(self._iter)
         except StopIteration:
             self._iter = iter(self.dataloader)
-            data = next( self._iter )
+            data = next(self._iter)
         return data
 #########################
+
 
 def seed_everything(seed):
     random.seed(seed)
@@ -282,12 +299,12 @@ def seed_everything(seed):
     torch.set_num_threads(1)
     os.environ['OMP_NUM_THREADS'] = '1'
     os.environ['MKL_NUM_THREADS'] = '1'
-    
+
 
 def start(args, fcgl_dataset, clients, server, message_pool, device):
     if args.global_eval:
         assert not args.isolate_mode
-    
+
     # data analysis
     print("-"*50)
     for client_id in range(args.num_clients):
@@ -299,16 +316,15 @@ def start(args, fcgl_dataset, clients, server, message_pool, device):
             result = torch.unique(label[node_mask]).cpu().tolist()
             result_list.append(str(result))
         print(f"client {client_id} tasks: {'=>'.join(result_list)}")
-        
 
     # start train
     print("-"*50)
     num_tasks = len(fcgl_dataset[0]["task"])
     args.num_tasks = num_tasks
-        
+
     FL_acc_matrix = torch.zeros(size=(num_tasks, num_tasks)).to(device)
 
-    for task_id in range(num_tasks): 
+    for task_id in range(num_tasks):
         FL_acc_matrix[task_id, :] = 0
         message_pool["task_id"] = task_id
         for client_id in range(args.num_clients):
@@ -319,46 +335,46 @@ def start(args, fcgl_dataset, clients, server, message_pool, device):
             server.send_message()
             for client_id in range(args.num_clients):
                 clients[client_id].execute(task_id)
-                clients[client_id].send_message(task_id)        
+                clients[client_id].send_message(task_id)
             server.execute()
         ##########
         for eval_task_id in range(0, task_id+1):
             total_nodes = 0
             for client_id in range(args.num_clients):
-                client_acc = clients[client_id].evaluate(task_id=eval_task_id, use_global=args.global_eval)
-                num_nodes = clients[client_id].data["task"][eval_task_id]["test_mask"].sum()
+                client_acc = clients[client_id].evaluate(
+                    task_id=eval_task_id, use_global=args.global_eval)
+                num_nodes = clients[client_id].data["task"][eval_task_id]["test_mask"].sum(
+                )
                 FL_acc_matrix[task_id, eval_task_id] += client_acc * num_nodes
                 total_nodes += num_nodes
             FL_acc_matrix[task_id, eval_task_id] /= total_nodes
-            print(f"[Task {task_id} Finish] Global Accuracy on Task {eval_task_id}: {FL_acc_matrix[task_id, eval_task_id]:.2f}")
+            print(
+                f"[Task {task_id} Finish] Global Accuracy on Task {eval_task_id}: {FL_acc_matrix[task_id, eval_task_id]:.2f}")
         print(FL_acc_matrix)
         aa = AA(FL_acc_matrix, T=task_id+1)
         af = AF(FL_acc_matrix, T=task_id+1)
-        print(f"[Task {task_id} Finish] Global AA: {aa:.2f}\tGlobal AF: {af:.2f}")
+        print(
+            f"[Task {task_id} Finish] Global AA: {aa:.2f}\tGlobal AF: {af:.2f}")
         for client_id in range(args.num_clients):
             clients[client_id].task_done(task_id)
         server.task_done(task_id)
         print("-"*50)
-    
+
     return aa, af
-        
-        
-        
-        
-        
+
 
 def load_clients_server(args, fcgl_dataset, device):
     message_pool = {}
-    
-    
+
     if args.method == "ours":
         from flcore.Ours import OursClient, OursServer
-        clients = [OursClient(args, client_id, fcgl_dataset[client_id], message_pool, device) for client_id in range(args.num_clients)]
+        clients = [OursClient(args, client_id, fcgl_dataset[client_id],
+                              message_pool, device) for client_id in range(args.num_clients)]
         server = OursServer(args, message_pool, device)
-    
+
     return clients, server, message_pool
-    
-    
+
+
 def edge_masking(edge_index, handled, device):
     num_nodes = edge_index.max().item()+1
     node_mask = torch.zeros(num_nodes, dtype=torch.bool).to(device)
@@ -366,11 +382,11 @@ def edge_masking(edge_index, handled, device):
         node_mask[node] = True
     mask = node_mask[edge_index[0]] & node_mask[edge_index[1]]
     edge_index = edge_index[:, mask].to(device)
-    self_loop_indices = torch.tensor([[node, node] for node in handled], dtype=torch.long).t().to(device)
+    self_loop_indices = torch.tensor(
+        [[node, node] for node in handled], dtype=torch.long).t().to(device)
     edge_index = torch.cat([edge_index, self_loop_indices], dim=1).to(device)
     edge_index = coalesce(edge_index)
     return edge_index
-
 
 
 def accuracy(logits, label):
@@ -378,7 +394,7 @@ def accuracy(logits, label):
     correct = (pred == label).sum()
     total = label.shape[0]
     return (correct / total)*100
-    
+
 
 def AA(M_acc, T=None):
     if T is None:
@@ -389,36 +405,34 @@ def AA(M_acc, T=None):
     result /= T
     return result
 
+
 def AF(M_acc, T=None):
     if T is None:
         T = M_acc.size(0)
-    if T == 1: # single task
-        return -1 # error
+    if T == 1:  # single task
+        return -1  # error
     result = 0
     for i in range(0, T-1):
-        forgetting = M_acc[i,i] - M_acc[T-1,i]
+        forgetting = M_acc[i, i] - M_acc[T-1, i]
         result += forgetting
-    result /= T-1   
+    result /= T-1
     return result
-
 
 
 # def update_buffer(buffer, replay, task, task_data, embedding, num_samples_per_class):
 #     if num_samples_per_class == 0:
 #         return buffer
-    
-    
+
+
 #     if replay == "CM":
 #         new_buffer = update_converage_max(buffer, task, task_data, embedding, num_samples_per_class)
-    
-#     return new_buffer
 
+#     return new_buffer
 
 
 def isolate_graph(x, y):
     edge_index = torch.empty((2, 0), dtype=torch.long)
     return Data(x=x, edge_index=edge_index.to(x.device), y=y)
-
 
 
 def update_random(buffer, task, task_data, num_samples_per_class):
@@ -432,20 +446,20 @@ def update_random(buffer, task, task_data, num_samples_per_class):
         class_i_train_list = class_i_train_mask.nonzero().squeeze().tolist()
         if type(class_i_train_list) is not list:
             class_i_train_list = [class_i_train_list]
-        selected_nodes = random.sample(class_i_train_list, num_samples_per_class)
+        selected_nodes = random.sample(
+            class_i_train_list, num_samples_per_class)
         x.append(task_data.x[selected_nodes])
         y.append(task_data.y[selected_nodes])
-    
+
     added_x = torch.cat(x)
     added_y = torch.cat(y)
-    
+
     if buffer["x"] is None:
         new_buffer = {"x": added_x, "y": added_y}
     else:
-        new_buffer = {"x": torch.cat((buffer["x"], added_x)), "y": torch.cat((buffer["y"], added_y))}
+        new_buffer = {"x": torch.cat(
+            (buffer["x"], added_x)), "y": torch.cat((buffer["y"], added_y))}
     return new_buffer
-
-
 
 
 def update_converage_max(buffer, task, task_data, embedding, num_samples_per_class, distance=0.1):
@@ -455,7 +469,7 @@ def update_converage_max(buffer, task, task_data, embedding, num_samples_per_cla
     all_classes = torch.unique(task_data.y[train_mask])
     x = []
     y = []
-    
+
     replay_buffer = None
 
     for class_i in all_classes:
@@ -463,61 +477,60 @@ def update_converage_max(buffer, task, task_data, embedding, num_samples_per_cla
         class_i_train_list = class_i_train_mask.nonzero().squeeze().tolist()
         if type(class_i_train_list) is not list:
             class_i_train_list = [class_i_train_list]
-            
 
         count = 0
         memory = []
         temp_memory = []
         cover = []
-        
-        dist_matrix = torch.cdist(embedding[class_i_train_mask], embedding[class_i_train_mask], p=2)
+
+        dist_matrix = torch.cdist(
+            embedding[class_i_train_mask], embedding[class_i_train_mask], p=2)
         distances_mean = torch.mean(dist_matrix)
-        dist_bin_matrix = torch.where(dist_matrix<distances_mean.item()* distance,1,0)
+        dist_bin_matrix = torch.where(
+            dist_matrix < distances_mean.item() * distance, 1, 0)
 
         temp_dist_bin_matrix = copy.deepcopy(dist_bin_matrix)
         while count < num_samples_per_class:
-            ind = (torch.sum(temp_dist_bin_matrix,0)).argmax()
+            ind = (torch.sum(temp_dist_bin_matrix, 0)).argmax()
             memory.append(class_i_train_list[ind])
             temp_memory.append(ind)
-            target_dist_matrix = temp_dist_bin_matrix[ind,:]
-            new_cover = torch.where(target_dist_matrix==1)[0]
+            target_dist_matrix = temp_dist_bin_matrix[ind, :]
+            new_cover = torch.where(target_dist_matrix == 1)[0]
             cover = list(set(cover) | set(new_cover))
-            temp_dist_bin_matrix[new_cover,:] = 0
-            temp_dist_bin_matrix[:,new_cover] = 0
+            temp_dist_bin_matrix[new_cover, :] = 0
+            temp_dist_bin_matrix[:, new_cover] = 0
 
-            #reset
+            # reset
             if len(cover) >= len(class_i_train_list) * 0.9:
                 cover = temp_memory
                 temp_dist_bin_matrix = copy.deepcopy(dist_bin_matrix)
-                temp_dist_bin_matrix[cover,:] = 0
-                temp_dist_bin_matrix[:,cover] = 0
+                temp_dist_bin_matrix[cover, :] = 0
+                temp_dist_bin_matrix[:, cover] = 0
 
             count += 1
-        
+
         memory = torch.from_numpy(np.array(memory))
 
         replay[class_i] = memory
-        
-        
+
         replay_buffer = replay[class_i][:num_samples_per_class]
         x.append(task_data.x[replay_buffer])
         y.append(task_data.y[replay_buffer])
-        
-        
+
     added_x = torch.cat(x)
     added_y = torch.cat(y)
-    
+
     if buffer["x"] is None:
         new_buffer = {"x": added_x, "y": added_y}
     else:
-        new_buffer = {"x": torch.cat((buffer["x"], added_x)), "y": torch.cat((buffer["y"], added_y))}
+        new_buffer = {"x": torch.cat(
+            (buffer["x"], added_x)), "y": torch.cat((buffer["y"], added_y))}
     return new_buffer
 
 
-
-
 def run_subprocess(command):
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     while True:
         output = process.stdout.readline()
         if output == '' and process.poll() is not None:
@@ -527,9 +540,9 @@ def run_subprocess(command):
             sys.stdout.flush()
 
     sys.exit(0)
-    
-    
-def construct_self_loop_graph(x,y=None):
+
+
+def construct_self_loop_graph(x, y=None):
     edge_index = torch.empty((2, 0), dtype=torch.long).to(x.device)
     if y is not None:
         return Data(x=x, edge_index=edge_index, y=y.to(x.device))
@@ -550,10 +563,9 @@ def construct_knn_graph(x, k=1):
     edge_index, _ = dense_to_sparse(edge)
     edge_index = remove_self_loops(edge_index)[0]
     data = Data(x=x, edge_index=edge_index)
-    
-    
+
     return data
-    
+
 
 def check_client_data(args, clients):
     label = []
@@ -568,9 +580,8 @@ def check_client_data(args, clients):
             for i in torch.unique(task_y):
                 label.append(i.item())
                 counter.append((task_y == i).sum().item())
-                print(f"client {client_id} task {task_id}: class {i.item()} = {(task_y == i).sum().item()}")
-    
+                print(
+                    f"client {client_id} task {task_id}: class {i.item()} = {(task_y == i).sum().item()}")
+
     print(label)
     print(counter)
-    
-    

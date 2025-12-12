@@ -8,7 +8,8 @@ parser.add_argument("--seed", type=int, default=2025)
 parser.add_argument("--disable_cuda", action="store_true", default=False)
 parser.add_argument("--shuffle_task", action="store_true", default=False)
 parser.add_argument("--isolate_mode", action="store_true", default=False)
-parser.add_argument("--global_eval", action="store_true", default=False) # default: local model on local data
+parser.add_argument("--global_eval", action="store_true",
+                    default=False)  # default: local model on local data
 
 
 parser.add_argument("--root", default="your_dataset_root_path")
@@ -21,13 +22,7 @@ parser.add_argument("--num_classes_per_task", type=int, default=2)
 parser.add_argument("--dataset", type=str, default="CiteSeer")
 
 
-
 parser.add_argument("--method", type=str, default="ours", choices=["ours"])
-
-
-
-
-
 
 
 parser.add_argument("--num_rounds_per_task", type=int, default=10)
@@ -38,10 +33,7 @@ parser.add_argument("--dropout", type=float, default=0.5)
 parser.add_argument("--lr", type=float, default=1e-2)
 parser.add_argument("--optim", type=str, default="adam")
 parser.add_argument("--weight_decay", type=float, default=5e-4)
-parser.add_argument("--model", type=str, default="gat")
-
-
-
+parser.add_argument("--model", type=str, default="jacobi")
 
 
 # config of Ours
@@ -49,7 +41,8 @@ parser.add_argument("--disable_kd", action="store_true", default=False)
 
 # fixed
 parser.add_argument("--alpha", type=float, default=0.5)
-parser.add_argument("--replay", type=str, default="CM", choices=["random", "CM"])
+parser.add_argument("--replay", type=str, default="CM",
+                    choices=["random", "CM"])
 parser.add_argument("--num_samples_per_class", type=int, default=1)
 parser.add_argument("--lr_g", default=1e-2)
 parser.add_argument("--LBFGS_init_lr", type=float, default=1.0)
@@ -63,7 +56,6 @@ parser.add_argument("--decay", type=float, default=0.3)
 parser.add_argument("--num_epoch_g", type=int, default=3)
 
 
-
 ##################################
 
 parser.add_argument("--max_nodes_per_graph", type=int, default=500)
@@ -75,4 +67,3 @@ parser.add_argument("--kd_epochs", type=int, default=200)
 parser.add_argument("--warmup", type=int, default=20)
 
 args = parser.parse_args()
-
