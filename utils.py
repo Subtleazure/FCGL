@@ -337,7 +337,7 @@ def start(args, fcgl_dataset, clients, server, message_pool, device):
                 clients[client_id].execute(task_id)
                 clients[client_id].send_message(task_id)
             server.execute()
-        ##########
+        # ↑ 训练  |  评估 ↓
         for eval_task_id in range(0, task_id+1):
             total_nodes = 0
             for client_id in range(args.num_clients):
@@ -357,6 +357,18 @@ def start(args, fcgl_dataset, clients, server, message_pool, device):
             f"[Task {task_id} Finish] Global AA: {aa:.2f}\tGlobal AF: {af:.2f}")
         for client_id in range(args.num_clients):
             clients[client_id].task_done(task_id)
+        # add M
+        if args.model == "jacobi":
+            for client_id in range(args.num_clients):
+                client = clients[client_id]
+                eval_model = client.local_model.eval()
+                whole_data = client.data["data"].to(client.device)
+                task = client.data["task"][task_id]
+                task_data = client.task_data(
+                    task_id, whole_data, task)
+                with torch.no_grad():
+                    _, _, Zs_stack, alpha = eval_model(task_data)
+                update_memory_with_sgp(args, client, task_id, Zs_stack, alpha)
         server.task_done(task_id)
         print("-"*50)
 
@@ -585,3 +597,217 @@ def check_client_data(args, clients):
 
     print(label)
     print(counter)
+
+
+def update_memory_with_sgp(args, client, task_id, Zs_stack, alpha):
+    """
+    更新客户端的频谱基底记忆 (M) 和重要性 (lam)。
+
+    参数:
+    - args: 包含超参数 (batch_size, threshold, gamma/alpha参数, hid_dim)
+    - client: 当前客户端对象，存储了 M, lam
+    - task_id: 当前任务ID
+    - Zs_stack: [K+1, N, D] 所有阶的输入特征 (CPU Tensor)
+    - alpha: [N, K+1] Attention权重 (CPU Tensor)
+    """
+
+    # 获取超参数
+    epsilon = args.epsilon   # 能量阈值 (e.g., 0.95 - 0.99)
+    gamma = args.gamma         # SGP的重要性缩放系数 (e.g., 100 or larger)
+    batch_size = args.batch_size
+    device = client.device     # 使用客户端的GPU进行加速
+
+    K = Zs_stack.shape[0] - 1
+    hid_dim = Zs_stack.shape[2]
+
+    # # 初始化存储 (如果是第一个任务)
+    # if not hasattr(client, 'M') or client.M is None:
+    #     client.M = {k: None for k in range(K + 1)}
+    #     client.lam = {k: None for k in range(K + 1)}
+
+    # --- 针对每一阶 K 分别处理 ---
+    for k in range(K + 1):
+        # 1. 准备数据
+        # Z_k: [N, D]
+        Z_k = Zs_stack[k]
+        num_nodes = Z_k.shape[0]
+
+        # 计算当前任务对第 k 阶的平均偏好 (用于最终重要性加权)
+        # alpha: [N, K+1] -> alpha[:, k] -> scalar
+        avg_alpha = alpha[:, k].mean().item()
+
+        # 2. 计算全图协方差矩阵 C = Z^T * Z (分块计算以节省显存)
+        # C 只有 [D, D] 大小，非常小
+        Cov_total = torch.zeros((hid_dim, hid_dim), device=device)
+
+        with torch.no_grad():
+            for i in range(0, num_nodes, batch_size):
+                # 切片并移入GPU
+                batch_Z = Z_k[i: i + batch_size].to(device)
+                # 累加协方差: [D, B] @ [B, D] -> [D, D]
+                Cov_total += torch.matmul(batch_Z.t(), batch_Z)
+
+        # 计算总能量 (Trace of Covariance)
+        total_energy = torch.trace(Cov_total)
+
+        # 3. 获取旧基底
+        M_old = client.M[k]     # [D, r_old] (Tensor on CPU or GPU)
+        lam_old = client.lam[k]  # [r_old]
+
+        if M_old is not None:
+            M_old = M_old.to(device)
+            lam_old = lam_old.to(device)
+
+            # --- SGP 核心逻辑: 计算旧基底在当前数据下的代理奇异值 ---
+
+            # 投影协方差 C_proj = M^T * C * M
+            # 物理含义: 当前数据在旧基底空间内的能量分布
+            Cov_proj = torch.mm(M_old.t(), torch.mm(Cov_total, M_old))
+
+            sigmas_proxy_sq = torch.diagonal(Cov_proj)
+            # 得到 SGP 论文中的 sigma' (surrogate singular values)
+            sigmas_proxy = torch.sqrt(torch.abs(sigmas_proxy_sq))
+
+            # --- 更新旧基底的重要性 (Max-Pooling) ---
+
+            # SGP重要性公式: lambda = (gamma + 1) * sig / (gamma * sig + max_sig)
+            # 注意: 这里的 max_sig 通常取当前分布的最大值，这里取 sigmas_proxy 的最大值
+            # max_sigma_proxy = sigmas_proxy[0] if len(sigmas_proxy) > 0 else 1.0
+
+            # lam_proxy_raw = ((gamma + 1) * sigmas_proxy) / \
+            #     (gamma * sigmas_proxy + max_sigma_proxy + 1e-8)
+
+            # # 结合任务偏好 avg_alpha
+            # lam_proxy_weighted = lam_proxy_raw * avg_alpha
+
+            # # 核心: 取历史最大值 (防遗忘)
+            # # 假设 lam_old 和 lam_proxy 维度一致 (基底固定顺序)
+            # lam_old_updated = torch.max(lam_old, lam_proxy_weighted)
+
+            # --- 计算新基底 (Residual) ---
+
+            # 我们需要找 Z 在 M_old 正交补空间上的成分
+            # 协方差公式: C_res = (I - MM^T) C (I - MM^T)
+            # 展开后: C_res = C - M M^T C - C M M^T + M (M^T C M) M^T
+            # 利用已计算的中间变量加速
+
+            MMT_C = torch.mm(torch.mm(M_old, M_old.t()), Cov_total)
+            term_last = torch.mm(M_old, torch.mm(
+                Cov_proj, M_old.t()))  # M * (M^T C M) * M^T
+
+            Cov_res = Cov_total - MMT_C - MMT_C.t() + term_last
+
+            # 确保对称性 (消除数值误差)
+            Cov_res = (Cov_res + Cov_res.t()) / 2
+
+            # 特征分解残差协方差
+            eigvals_res, V_res = torch.linalg.eigh(Cov_res)
+
+            # 排序
+            idx = torch.argsort(eigvals_res, descending=True)
+            eigvals_res = eigvals_res[idx]
+            V_res = V_res[:, idx]
+
+            # 能量截断，确定新基底数量
+            energy_old = torch.sum(torch.square(sigmas_proxy))  # 注意这里要用平方和作为能量
+            current_energy = energy_old
+            target_energy = epsilon * total_energy  # right
+
+            num_new_bases = 0
+            for i in range(len(eigvals_res)):
+                if current_energy >= target_energy:
+                    break
+                if eigvals_res[i] > 0:
+                    current_energy += eigvals_res[i]
+                    num_new_bases += 1
+
+            # 提取新基底及其奇异值
+            if num_new_bases > 0:
+                M_new = V_res[:, :num_new_bases]
+                sigmas_new = torch.sqrt(eigvals_res[:num_new_bases])  # [r_new]
+            else:
+                M_new = torch.empty((hid_dim, 0), device=device)
+                sigmas_new = torch.tensor([], device=device)
+
+            # =======================================================
+            # 【核心修改】：联合归一化 (Joint Normalization)
+            # =======================================================
+
+            # 1. 拼接所有的奇异值 (旧代理 + 新残差)
+            all_sigmas = torch.cat([sigmas_proxy, sigmas_new])
+
+            if len(all_sigmas) > 0:
+                # 2. 找到当前任务视角的全局最大能量
+                max_sigma_total = torch.max(all_sigmas)
+
+                # 3. 统一计算 lambda (SGP Eq. 2)
+                # 这里的 lam_all 是当前任务对所有基底(新+旧)的“当前评价”
+                lam_all_raw = ((gamma + 1) * all_sigmas) / \
+                    (gamma * all_sigmas + max_sigma_total)
+
+                # 4. 乘以任务偏好 alpha
+                # lam_all_weighted = lam_all_raw * avg_alpha
+                lam_all_weighted = lam_all_raw
+                # 5. 拆分回旧部分和新部分
+                r_old = len(sigmas_proxy)
+                lam_proxy_weighted = lam_all_weighted[:r_old]
+                lam_new_weighted = lam_all_weighted[r_old:]
+
+                # 6. 历史更新 (Max-Pooling)
+                # 即使 lam_proxy_weighted 因为 max_sigma_total 变大而变小了，
+                # lam_old 里的历史高分依然会被保留。
+                lam_old_updated = torch.max(lam_old, lam_proxy_weighted)
+
+                # 7. 拼接最终结果
+                M_final = torch.cat([M_old, M_new], dim=1)
+                lam_final = torch.cat([lam_old_updated, lam_new_weighted])
+
+            else:
+                # 极端情况：没有能量
+                M_final = M_old
+                lam_final = lam_old
+        else:
+            # --- 第一次任务: 直接对 Cov_total 做分解 ---
+            eigvals, V = torch.linalg.eigh(Cov_total)
+
+            # 排序
+            idx = torch.argsort(eigvals, descending=True)
+            eigvals = eigvals[idx]
+            V = V[:, idx]
+
+            # 阈值截断
+            current_energy = 0
+            target_energy = epsilon * total_energy
+            num_bases = 0
+
+            for i in range(len(eigvals)):
+                if current_energy >= target_energy:
+                    break
+                current_energy += eigvals[i]
+                num_bases += 1
+
+            M_final = V[:, :num_bases]
+            sigmas = torch.sqrt(eigvals[:num_bases])
+
+            # 计算重要性
+            if num_bases > 0:
+                max_sigma = sigmas[0]
+                lam_raw = ((gamma + 1) * sigmas) / \
+                    (gamma * sigmas + max_sigma + 1e-8)
+                # lam_final = lam_raw * avg_alpha
+                lam_final = lam_raw
+            else:
+                # 极端情况处理
+                lam_final = torch.tensor([], device=device)
+
+        # 4. 保存回客户端 (存回 CPU 以节省显存)
+        client.M[k] = M_final.cpu()
+        client.lam[k] = lam_final.cpu()
+
+        # 显存清理
+        del Cov_total
+        if M_old is not None:
+            del M_old
+
+    # 循环结束
+    print(f"Client {client.client_id} memory updated for Task {task_id}.")

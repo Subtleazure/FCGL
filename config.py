@@ -19,13 +19,13 @@ parser.add_argument("--repeat", type=int, default=10)
 
 parser.add_argument("--num_clients", type=int, default=3)
 parser.add_argument("--num_classes_per_task", type=int, default=2)
-parser.add_argument("--dataset", type=str, default="CiteSeer")
+parser.add_argument("--dataset", type=str, default="Cora")
 
 
 parser.add_argument("--method", type=str, default="ours", choices=["ours"])
 
 
-parser.add_argument("--num_rounds_per_task", type=int, default=10)
+parser.add_argument("--num_rounds_per_task", type=int, default=100)
 parser.add_argument("--client_frac", type=float, default=1.0)
 parser.add_argument("--num_epochs", type=int, default=3)
 parser.add_argument("--hid_dim", type=int, default=64)
@@ -65,5 +65,14 @@ parser.add_argument("--temperature", type=float, default=2)
 parser.add_argument("--gpuid", type=int, default=0)
 parser.add_argument("--kd_epochs", type=int, default=200)
 parser.add_argument("--warmup", type=int, default=20)
+parser.add_argument("--K", type=int, default=5)  # 谱阶数
+parser.add_argument("--epsilon", type=float, default=0.95)  # energy threshold
+# importance scaling coefficient
+parser.add_argument("--gamma", type=float, default=1.0)
+parser.add_argument("--batch_size", type=int, default=10000)
+# svd
+# parser.add_argument("--M", type=list, default=[])  # 基底
+parser.add_argument("--B", type=list, default=[])
+parser.add_argument("--Omega", type=list, default=[])
 
 args = parser.parse_args()
