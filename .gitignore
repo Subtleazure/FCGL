@@ -1,0 +1,6 @@
+__pycache__/
+your_dataset_root_path/
+openfgl/__pycache__/
+*.pyc
+openfgl/utils/__pycache__/
+openfgl/data/__pycache__/
