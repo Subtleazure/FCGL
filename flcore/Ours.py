@@ -60,11 +60,23 @@ class OursClient(BaseClient):
             self.optim.zero_grad()
 
             # Forward pass on current task data
-# --- 前向传播 ---
+            # --- 前向传播 ---
             if self.args.model == "jacobi":
                 logits, embedding, _, _ = self.local_model.forward(task_data)
             else:
                 logits, embedding, _ = self.local_model.forward(task_data)
+
+            if epoch_i % 10 == 0:  # 每 10 轮打印一次
+                preds = logits[task["train_mask"]].argmax(dim=1)
+                pred_counts = torch.bincount(
+                    preds, minlength=self.args.output_dim)
+                print(
+                    f"[DEBUG] Client {self.client_id} Epoch {epoch_i} 预测的各类别数量: {pred_counts.tolist()}")
+
+                emb_max = embedding.abs().max().item()
+                logit_max = logits.abs().max().item()
+                print(
+                    f"[DEBUG] Client {self.client_id} Emb Max: {emb_max:.2f}, Logit Max: {logit_max:.2f}")
 
             # --- 1. 当前任务的学习 (Local Plasticity) ---
             train_mask = task["train_mask"]
@@ -79,17 +91,14 @@ class OursClient(BaseClient):
                 with torch.no_grad():
                     _, z_old, _, _ = old_global_model(task_data)
 
-                cos_sim = F.cosine_similarity(
-                    embedding[train_mask], z_old[train_mask], dim=1, eps=1e-8)
+                loss_feat_stability = 1.0 - F.cosine_similarity(
+                    embedding[train_mask],
+                    z_old[train_mask],
+                    dim=1,
+                    eps=1e-8
+                ).mean()
 
-                # 【修改 1】：引入 Margin (宽容度)。
-                # 只要相似度大于 0.9，就不产生 Loss，允许模型在局部自由微调！
-                # 这能极大缓解长程磨损，防止强约束压垮模型。
-                margin = 0.90
-                loss_feat_stability = torch.clamp(
-                    margin - cos_sim, min=0.0).mean()
-
-                loss += 5.0 * loss_feat_stability
+                loss += self.args.lam_feat * loss_feat_stability  # 5.0
 
             # -------------------------------------------------------------
             # --- 3. 动态过滤的全局回放 (Dynamic Filtered Replay) ---
@@ -129,10 +138,35 @@ class OursClient(BaseClient):
                     ) * (T * T)
 
                     # 参数建议：将拉锯战交给软标签。Hard CE降为 0.5 或者 0.0
-                    loss += 0.5 * loss_replay_hard + 2.0 * loss_replay_soft
+                    loss += 1.0 * loss_replay_hard + 5.0 * loss_replay_soft
 
             # --- 反向传播 ---
+            if epoch_i == 0 or epoch_i == self.args.num_epochs - 1:
+                ce_val = loss_ce.item()
+
+                # 假设你定义了这两个 loss (如果没有这部分，改成你实际的名字)
+                feat_val = loss_feat_stability.item() if 'loss_feat_stability' in locals() else 0
+                replay_hard_val = loss_replay_hard.item() if 'loss_replay_hard' in locals() else 0
+                replay_soft_val = loss_replay_soft.item() if 'loss_replay_soft' in locals() else 0
+
+                print(
+                    f"[DEBUG] Client {self.client_id} Task {task_id} | CE: {ce_val:.4f} | Feat: {feat_val:.4f} | Replay Hard: {replay_hard_val:.4f} | Replay Soft: {replay_soft_val:.4f}")
             loss.backward()
+
+            # --- NaN 探针 ---
+            # 检查 loss 是否已经是 NaN
+            if torch.isnan(loss).any():
+                print(
+                    f"[DEBUG] Client {self.client_id} Task {task_id}: LOSS 出现 NaN! 赶紧终止程序。")
+                import sys
+                sys.exit(1)
+
+            # 检查梯度是否爆炸或变成 NaN
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                self.local_model.parameters(), max_norm=100.0)
+            if torch.isnan(grad_norm) or torch.isinf(grad_norm):
+                print(
+                    f"[DEBUG] Client {self.client_id} Task {task_id}: 梯度爆炸了! Grad Norm: {grad_norm}")
 
             # --- C. Apply Spectral Mask (Gradient Modification) ---
             if self.accumulated_mask is not None and self.args.model == "jacobi" and self.args.para:
@@ -151,14 +185,12 @@ class OursClient(BaseClient):
         task = self.data["task"][task_id]
         task_data = self.task_data(task_id, whole_data, task)
 
-        # --- 1. Calculate Mask ---
-        self.local_model.zero_grad()
-        logits, _, _, alpha = self.local_model.forward(task_data)
-        loss = self.loss_fn(logits[task["train_mask"]],
-                            whole_data.y[task["train_mask"]])
-        loss.backward()
-
         if self.args.para:
+            self.local_model.zero_grad()
+            logits, _, _, alpha = self.local_model.forward(task_data)
+            loss = self.loss_fn(logits[task["train_mask"]],
+                                whole_data.y[task["train_mask"]])
+            loss.backward()
             with torch.no_grad():
                 grads = self.local_model.W_weight.grad.abs()
                 avg_alpha = alpha.mean(dim=0).view(-1, 1, 1)
@@ -225,10 +257,10 @@ class OursClient(BaseClient):
                                     cluster_points.mean(axis=0)))
                         prototypes = torch.stack(proto_list)
 
-                    # [LDP Privacy Guarantee] 注入轻微高斯噪声，防止隐私推断
-                    noise_scale = 0.01
-                    noise = torch.randn_like(prototypes) * noise_scale
-                    prototypes = prototypes + noise
+                    # # [LDP Privacy Guarantee] 注入轻微高斯噪声，防止隐私推断
+                    # noise_scale = 0.01
+                    # noise = torch.randn_like(prototypes) * noise_scale
+                    # prototypes = prototypes + noise
 
                     stats[c.item()] = prototypes
 
@@ -303,7 +335,7 @@ class OursServer(BaseServer):
         # --- Memory Bank Component ---
         self.global_memory_bank = {}  # {class_id: tensor(Num_Protos, D)}
         self.pseudo_data = None  # (features_tensor, labels_tensor)
-        self.max_protos_per_class = 40  # 限制 Memory Bank 大小，防止爆炸
+        self.max_protos_per_class = 100  # 限制 Memory Bank 大小，防止爆炸
 
     def execute(self):
         with torch.no_grad():
@@ -344,40 +376,46 @@ class OursServer(BaseServer):
     def task_done(self, task_id):
         """
         Server lifecycle at end of task:
-        1. Save Old Model.
-        2. Collect and Compress Prototypes (Spectral Clustering).
-        3. Prepare Data for next round.
+        1. Save Old Model (Teacher for Feature Alignment).
+        2. Collect new prototypes from clients.
+        3. Compress Prototypes (Spectral Clustering).
+        4. [核心创新] Compute Golden Logits at PEAK performance!
+        5. Prepare Data (Features, Labels, Golden Logits) for next round.
         """
         if self.args.gene:
+            # 1. 保存旧模型，仅用于客户端计算特征层面的 MSE Loss (Feature Alignment)
             self.old_global_model = copy.deepcopy(self.global_model)
             for param in self.old_global_model.parameters():
                 param.requires_grad = False
             self.old_global_model.eval()
 
-            # 1. 收集所有 Client 的 Prototypes
+            # 2. 收集当前 Task 各个 Client 上传的最新原型
+            current_task_protos = {}
             for client_id in range(self.args.num_clients):
                 c_stats = self.message_pool.get(
                     f"client_{client_id}_stats", {})
                 for c, protos in c_stats.items():
-                    if c not in self.global_memory_bank:
-                        self.global_memory_bank[c] = protos
+                    if c not in current_task_protos:
+                        current_task_protos[c] = protos.cpu()
                     else:
-                        self.global_memory_bank[c] = torch.cat(
-                            [self.global_memory_bank[c], protos], dim=0)
+                        current_task_protos[c] = torch.cat(
+                            [current_task_protos[c], protos.cpu()], dim=0)
 
-            # 2. 全局谱压缩 (Global Spectral Compression)
-            # 为了 Scalability，对过大的类别进行聚类合并
-            for c in self.global_memory_bank.keys():
-                protos = self.global_memory_bank[c]
+            # 3. 谱压缩与黄金 Logits 缓存
+            self.global_model.eval()
+            for c, protos in current_task_protos.items():
                 num_protos = protos.shape[0]
 
+                # --- A. 谱聚类压缩 (Scalability) ---
                 if num_protos > self.max_protos_per_class:
                     protos_np = protos.numpy()
                     try:
+                        # 捕获流形拓扑
                         sc = SpectralClustering(
                             n_clusters=self.max_protos_per_class, affinity='nearest_neighbors', random_state=42)
                         cluster_labels = sc.fit_predict(protos_np)
                     except:
+                        # 降级方案
                         kmeans = KMeans(
                             n_clusters=self.max_protos_per_class, random_state=42)
                         cluster_labels = kmeans.fit_predict(protos_np)
@@ -388,27 +426,75 @@ class OursServer(BaseServer):
                         if cluster_points.shape[0] > 0:
                             new_protos.append(cluster_points.mean(dim=0))
 
-                    self.global_memory_bank[c] = torch.stack(new_protos)
+                    compressed_protos = torch.stack(new_protos)
+                else:
+                    compressed_protos = protos
 
-            # 3. 准备 Pseudo Data
+                # --- B. 提取并永久缓存巅峰状态的暗知识 (Golden Logits) ---
+                compressed_protos = compressed_protos.to(self.device)
+                with torch.no_grad():
+                    # 用刚训练完当前 Task 的、记忆最清晰的全局分类器进行前向传播
+                    golden_logits = self.global_model.classifier(
+                        compressed_protos).cpu()
+
+                # 特征转回 CPU 存储，节省显存
+                compressed_protos = compressed_protos.cpu()
+
+                # --- C. 存入全局记忆库 (Memory Bank Update) ---
+                if c not in self.global_memory_bank:
+                    self.global_memory_bank[c] = {
+                        "features": compressed_protos,
+                        "logits": golden_logits
+                    }
+                else:
+                    # 如果该类在之前的 Task 出现过，我们合并后保留最新的以防爆炸
+                    old_features = self.global_memory_bank[c]["features"]
+                    old_logits = self.global_memory_bank[c]["logits"]
+
+                    combined_features = torch.cat(
+                        [old_features, compressed_protos], dim=0)
+                    combined_logits = torch.cat(
+                        [old_logits, golden_logits], dim=0)
+
+                    if combined_features.shape[0] > self.max_protos_per_class:
+                        # 【关键修复】：不能只取最新的！必须随机打乱抽样，保证新旧知识共存
+                        perm = torch.randperm(combined_features.shape[0])
+                        idx = perm[:self.max_protos_per_class]
+
+                        combined_features = combined_features[idx]
+                        combined_logits = combined_logits[idx]
+
+                    self.global_memory_bank[c] = {
+                        "features": combined_features,
+                        "logits": combined_logits
+                    }
+
+            # 4. 准备下发给 Client 的 Pseudo Data
             self.pseudo_data = self.prepare_data()
 
     def prepare_data(self):
-        """Flatten the dictionary into tensors for the clients"""
+        """Flatten the dictionary into (Features, Labels, Logits) for the clients"""
         features_list = []
         labels_list = []
+        logits_list = []
 
         if len(self.global_memory_bank) == 0:
             return None
 
-        for c, protos in self.global_memory_bank.items():
+        # 将字典解包成三个并列的 Tensor
+        for c, data_dict in self.global_memory_bank.items():
+            protos = data_dict["features"]
+            g_logits = data_dict["logits"]
             num_protos = protos.shape[0]
+
             c_tensor = torch.full((num_protos,), c, dtype=torch.long)
 
             features_list.append(protos)
             labels_list.append(c_tensor)
+            logits_list.append(g_logits)
 
-        return torch.cat(features_list), torch.cat(labels_list)
+        # 拼接并返回，供客户端在蒸馏时解包使用
+        return torch.cat(features_list), torch.cat(labels_list), torch.cat(logits_list)
 
     def send_message(self):
         self.message_pool["server"] = {

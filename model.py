@@ -224,7 +224,8 @@ class Jacobi(nn.Module):
         Z_tilde = torch.sum(alpha.unsqueeze(-1) * Hs_stack_permuted, dim=1)
 
         Z_tilde = self.act(Z_tilde)
-        Z_tilde = F.dropout(Z_tilde, p=self.dropout)
+        Z_tilde = F.dropout(Z_tilde, p=self.dropout, training=self.training)
+        Z_tilde = F.normalize(Z_tilde, p=2, dim=1)
 
         out = self.classifier(Z_tilde)
 
