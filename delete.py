@@ -1,3 +1,8 @@
+from config import args
+import os
+import shutil
+
+
 def delete_experiment_by_id(base_dirs, target_id):
     """
     删除所有 base_dirs 中编号为 target_id 的文件夹。
@@ -18,22 +23,17 @@ def delete_experiment_by_id(base_dirs, target_id):
     print("Deletion complete.\n")
 
 
-# 假设你已经有了 args 对象或者重新定义了路径列表
-# 这里为了演示，我手动定义路径列表，实际使用时可以直接 import 你的配置
 base_dirs_to_clean = [
-    "./results/accuracy_html",
-    "./results/accuracy_png",
-    "./results/aa_html",
-    "./results/aa_png",
-    "./results/af_html",
-    "./results/af_png"
-    # 把你 args 里所有的路径填在这里
+    f"/data1/liujiaqi/FCGL_results/acc/html/{args.dataset}",
+    f"/data1/liujiaqi/FCGL_results/acc/png/{args.dataset}",
+    f"/data1/liujiaqi/FCGL_results/aa/html/{args.dataset}",
+    f"/data1/liujiaqi/FCGL_results/aa/png/{args.dataset}",
+    f"/data1/liujiaqi/FCGL_results/af/html/{args.dataset}",
+    f"/data1/liujiaqi/FCGL_results/af/png/{args.dataset}"
 ]
 
-# 引入第一部分定义的函数
-
 if __name__ == "__main__":
-    target = input("请输入要删除的实验编号 (例如 0): ").strip()
+    target = input(f"请输入要删除的数据集 {args.dataset} 的实验编号 (例如 0): ").strip()
 
     # 二次确认，防止手滑
     confirm = input(f"警告：这将删除所有目录下编号为 '{target}' 的文件夹及其内容。\n确认删除吗？(y/n): ")

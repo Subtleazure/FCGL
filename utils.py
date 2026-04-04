@@ -47,7 +47,7 @@ def start(args, fcgl_dataset, clients, server, message_pool, device):
             self.log.flush()
 
     # 确定日志文件名
-    log_filename = f"log_{args.dataset}.txt"
+    log_filename = f"./FCGL/logs/log_{args.dataset}.txt"
     # 如果你想每次运行都覆盖旧日志，可以用 "w" 模式，或者在这里先删除旧文件
     sys.stdout = Logger(log_filename)
     # -----------------------
@@ -238,7 +238,7 @@ def create_experiment_folders(base_dirs, exp_id):
     return created_paths
 
 
-def plot_accuracy_curve(self, accuracies):
+def plot_accuracy_curve(accuracies, html_path, png_path, window_len):
     """
     绘制原始准确率曲线和拟合图像，并保存为 HTML 文件和图片文件。
 
@@ -247,15 +247,17 @@ def plot_accuracy_curve(self, accuracies):
     """
 
     # 绘制拟合图像
-    if self.args.accuracy_curve_html_dir:
+    accuracies = [acc.item() if torch.is_tensor(
+        acc) else acc for acc in accuracies]
+    if html_path:
         plot_smoothed_accuracy_plotly(
-            accuracies, self.args.accuracy_curve_html_dir, self.args.window_len)
+            accuracies, html_path, window_len)
     else:
         plot_smoothed_accuracy_plotly(accuracies, "accuracy_curve.html")
 
-    if self.args.accuracy_curve_dir:
+    if png_path:
         plot_smoothed_accuracy_matplotlib(
-            accuracies, self.args.accuracy_curve_dir, self.args.window_len)
+            accuracies, png_path, window_len)
     else:
         plot_smoothed_accuracy_matplotlib(accuracies, "accuracy_curve.png")
 

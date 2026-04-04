@@ -142,7 +142,7 @@ class OursClient(BaseClient):
                         self.args.lam_re_soft * loss_replay_soft
 
             # --- 反向传播 ---
-            if epoch_i == 0 or epoch_i == self.args.num_epochs - 1:
+            if epoch_i == 0 or epoch_i == self.args.num_epochs - 1 and self.args.debug:
                 ce_val = loss_ce.item()
 
                 # 假设你定义了这两个 loss (如果没有这部分，改成你实际的名字)

@@ -4,3 +4,4 @@ openfgl/__pycache__/
 *.pyc
 openfgl/utils/__pycache__/
 openfgl/data/__pycache__/
+logs/

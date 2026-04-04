@@ -6,7 +6,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("--seed", type=int, default=2025)
 parser.add_argument("--disable_cuda", action="store_true", default=False)
-parser.add_argument("--shuffle_task", action="store_true", default=False)
+parser.add_argument("--shuffle_task", action="store_true", default=True)
 parser.add_argument("--isolate_mode", action="store_true", default=False)
 parser.add_argument("--global_eval", action="store_true",
                     default=False)  # default: local model on local data
@@ -60,9 +60,10 @@ parser.add_argument("--warmup", type=int, default=20)
 
 parser.add_argument("--print", type=bool, default=False)
 
-parser.add_argument("--para", type=bool, default=True)
+parser.add_argument("--para", type=bool, default=False)
 parser.add_argument("--gene", type=bool, default=True)
 parser.add_argument("--debug", type=bool, default=True)
+parser.add_argument("--save", type=bool, default=True)
 
 parser.add_argument("--lam_feat", type=float, default=5.0)
 parser.add_argument("--lam_re_hard", type=float, default=1.0)

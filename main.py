@@ -42,7 +42,7 @@ def run_experiment():
         first_initialized_copy["clients"] = copy.deepcopy(clients)
         first_initialized_copy["server"] = copy.deepcopy(server)
 
-    return start(args, fcgl_dataset, clients, server, message_pool, device)[0]
+    return start(args, fcgl_dataset, clients, server, message_pool, device)
 
 
 def get_best_gpu():
@@ -95,7 +95,7 @@ if __name__ == "__main__":
     args.task_dir = task_dir
 
     # 运行实验
-    result = run_experiment()
+    run_experiment()
 
     print("K:", args.K)
     print("rounds:", args.num_rounds_per_task)
@@ -106,3 +106,4 @@ if __name__ == "__main__":
     print("lam_re_hard:", args.lam_re_hard)
     print("T:", args.T)
     print("lam_re_soft:", args.lam_re_soft)
+    print("shuffle_task:", args.shuffle_task)
