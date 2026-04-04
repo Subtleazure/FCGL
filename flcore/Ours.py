@@ -41,7 +41,7 @@ class OursClient(BaseClient):
         task_mask = task["train_mask"] | task["val_mask"] | task["test_mask"]
         return task_mask.sum()
 
-    def execute(self, task_id):
+    def execute(self, task_id, round_id):
         whole_data = self.data["data"].to(self.device)
         task = self.data["task"][task_id]
         task_data = self.task_data(task_id, whole_data, task)
@@ -66,7 +66,7 @@ class OursClient(BaseClient):
             else:
                 logits, embedding, _ = self.local_model.forward(task_data)
 
-            if epoch_i % 10 == 0:  # 每 10 轮打印一次
+            if round_id % 10 == 0 and self.args.debug:  # 每 10 轮打印一次
                 preds = logits[task["train_mask"]].argmax(dim=1)
                 pred_counts = torch.bincount(
                     preds, minlength=self.args.output_dim)
@@ -130,7 +130,7 @@ class OursClient(BaseClient):
                     loss_replay_hard = self.loss_fn(
                         student_logits_proto, p_labels)
 
-                    T = 2.0
+                    T = self.args.T
                     loss_replay_soft = F.kl_div(
                         F.log_softmax(student_logits_proto / T, dim=1),
                         F.softmax(p_golden_logits / T, dim=1),
@@ -138,7 +138,8 @@ class OursClient(BaseClient):
                     ) * (T * T)
 
                     # 参数建议：将拉锯战交给软标签。Hard CE降为 0.5 或者 0.0
-                    loss += 1.0 * loss_replay_hard + 5.0 * loss_replay_soft
+                    loss += self.args.lam_re_hard * loss_replay_hard + \
+                        self.args.lam_re_soft * loss_replay_soft
 
             # --- 反向传播 ---
             if epoch_i == 0 or epoch_i == self.args.num_epochs - 1:

@@ -5,10 +5,18 @@ import copy
 from data import load_fcgl_dataset
 from utils import load_clients_server, start, seed_everything
 from random import randint
+import torch_geometric
 
-# 手动设置超参数
-args.beta = 0.05  # 可以设置为 0.01 到 0.1 之间的值
-args.num_epoch_g = 5  # 可以设置为 3, 5 或 10
+torch.serialization.add_safe_globals([
+    torch_geometric.data.data.DataEdgeAttr
+])
+
+# 如果后续还提示拦截了其他 PyG 对象（例如 Data），可以像下面这样一并加入：
+# from torch_geometric.data import Data
+# torch.serialization.add_safe_globals([
+#     torch_geometric.data.data.DataEdgeAttr,
+#     Data
+# ])
 
 first_initialized_copy = {"flag": False, "clients": None, "server": None}
 
@@ -94,3 +102,7 @@ if __name__ == "__main__":
     print("para:", args.para)
     print("gene:", args.gene)
     print("attention:", args.alpha_at)
+    print("lam_feat:", args.lam_feat)
+    print("lam_re_hard:", args.lam_re_hard)
+    print("T:", args.T)
+    print("lam_re_soft:", args.lam_re_soft)
