@@ -65,16 +65,16 @@ parser.add_argument("--gene", type=bool, default=True)
 parser.add_argument("--debug", type=bool, default=True)
 parser.add_argument("--save", type=bool, default=True)
 
-parser.add_argument("--lam_feat", type=float, default=5.0)
+parser.add_argument("--lam_feat", type=float, default=2.0)
 parser.add_argument("--lam_re_hard", type=float, default=1.0)
 parser.add_argument("--T", type=float, default=2.0)
-parser.add_argument("--lam_re_soft", type=float, default=5.0)
+parser.add_argument("--lam_re_soft", type=float, default=2.0)
 
-parser.add_argument("--num_rounds_per_task", type=int, default=55)
+parser.add_argument("--num_rounds_per_task", type=int, default=80)
 
 parser.add_argument("--num_clients", type=int, default=3)
 parser.add_argument("--num_classes_per_task", type=int, default=2)
-parser.add_argument("--dataset", type=str, default="CiteSeer")
+parser.add_argument("--dataset", type=str, default="Computers")
 
 
 parser.add_argument("--gpuid", type=int, default=7)

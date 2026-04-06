@@ -107,3 +107,4 @@ if __name__ == "__main__":
     print("T:", args.T)
     print("lam_re_soft:", args.lam_re_soft)
     print("shuffle_task:", args.shuffle_task)
+    print("num_rounds_per_task:", args.num_rounds_per_task)

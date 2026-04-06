@@ -34,7 +34,7 @@ class OursClient(BaseClient):
         self.temp = 0.05  # Temperature for soft sigmoid
 
         # 提取原型的数量参数
-        self.num_prototypes_per_class = 5
+        self.num_prototypes_per_class = 50
 
     def get_task_num_samples(self, task_id):
         task = self.data["task"][task_id]
@@ -71,7 +71,7 @@ class OursClient(BaseClient):
                 pred_counts = torch.bincount(
                     preds, minlength=self.args.output_dim)
                 print(
-                    f"[DEBUG] Client {self.client_id} Epoch {epoch_i} 预测的各类别数量: {pred_counts.tolist()}")
+                    f"[DEBUG] Client {self.client_id} Round {round_id} 预测的各类别数量: {pred_counts.tolist()}")
 
                 emb_max = embedding.abs().max().item()
                 logit_max = logits.abs().max().item()
@@ -92,8 +92,8 @@ class OursClient(BaseClient):
                     _, z_old, _, _ = old_global_model(task_data)
 
                 loss_feat_stability = 1.0 - F.cosine_similarity(
-                    embedding[train_mask],
-                    z_old[train_mask],
+                    embedding,
+                    z_old,
                     dim=1,
                     eps=1e-8
                 ).mean()
@@ -130,6 +130,11 @@ class OursClient(BaseClient):
                     loss_replay_hard = self.loss_fn(
                         student_logits_proto, p_labels)
 
+                    # student_logits_proto = student_logits_proto - \
+                    #     student_logits_proto.mean(dim=1, keepdim=True)
+                    # p_golden_logits = p_golden_logits - \
+                    #     p_golden_logits.mean(dim=1, keepdim=True)
+
                     T = self.args.T
                     loss_replay_soft = F.kl_div(
                         F.log_softmax(student_logits_proto / T, dim=1),
@@ -140,18 +145,19 @@ class OursClient(BaseClient):
                     # 参数建议：将拉锯战交给软标签。Hard CE降为 0.5 或者 0.0
                     loss += self.args.lam_re_hard * loss_replay_hard + \
                         self.args.lam_re_soft * loss_replay_soft
+                    # loss += self.args.lam_re_soft * loss_replay_soft
 
             # --- 反向传播 ---
-            if epoch_i == 0 or epoch_i == self.args.num_epochs - 1 and self.args.debug:
+            if round_id % 10 == 0 and self.args.debug:
                 ce_val = loss_ce.item()
 
                 # 假设你定义了这两个 loss (如果没有这部分，改成你实际的名字)
                 feat_val = loss_feat_stability.item() if 'loss_feat_stability' in locals() else 0
-                replay_hard_val = loss_replay_hard.item() if 'loss_replay_hard' in locals() else 0
+                # replay_hard_val = loss_replay_hard.item() if 'loss_replay_hard' in locals() else 0
                 replay_soft_val = loss_replay_soft.item() if 'loss_replay_soft' in locals() else 0
 
                 print(
-                    f"[DEBUG] Client {self.client_id} Task {task_id} | CE: {ce_val:.4f} | Feat: {feat_val:.4f} | Replay Hard: {replay_hard_val:.4f} | Replay Soft: {replay_soft_val:.4f}")
+                    f"[DEBUG] Client {self.client_id} Task {task_id} | CE: {ce_val:.4f} | Feat: {feat_val:.4f} | Replay Soft: {replay_soft_val:.4f}")
             loss.backward()
 
             # --- NaN 探针 ---
@@ -256,6 +262,13 @@ class OursClient(BaseClient):
                             if cluster_points.shape[0] > 0:
                                 proto_list.append(torch.tensor(
                                     cluster_points.mean(axis=0)))
+                            # if cluster_points.shape[0] > 0:
+                            #     # 因为 cluster_points 是 numpy，转为 tensor 求均值再归一化
+                            #     center = torch.tensor(
+                            #         cluster_points.mean(axis=0))
+                            #     center = F.normalize(
+                            #         center.unsqueeze(0), p=2, dim=1).squeeze(0)
+                            #     proto_list.append(center)
                         prototypes = torch.stack(proto_list)
 
                     # # [LDP Privacy Guarantee] 注入轻微高斯噪声，防止隐私推断
@@ -336,7 +349,7 @@ class OursServer(BaseServer):
         # --- Memory Bank Component ---
         self.global_memory_bank = {}  # {class_id: tensor(Num_Protos, D)}
         self.pseudo_data = None  # (features_tensor, labels_tensor)
-        self.max_protos_per_class = 100  # 限制 Memory Bank 大小，防止爆炸
+        self.max_protos_per_class = 1000  # 限制 Memory Bank 大小，防止爆炸
 
     def execute(self):
         with torch.no_grad():
@@ -415,17 +428,28 @@ class OursServer(BaseServer):
                         sc = SpectralClustering(
                             n_clusters=self.max_protos_per_class, affinity='nearest_neighbors', random_state=42)
                         cluster_labels = sc.fit_predict(protos_np)
+                        print(
+                            f"[INFO] Class {c}: Spectral Clustering applied for prototype compression.")
                     except:
                         # 降级方案
                         kmeans = KMeans(
                             n_clusters=self.max_protos_per_class, random_state=42)
                         cluster_labels = kmeans.fit_predict(protos_np)
+                        print(
+                            f"[INFO] Class {c}: KMeans applied for prototype compression.")
 
                     new_protos = []
                     for i in range(self.max_protos_per_class):
                         cluster_points = protos[cluster_labels == i]
                         if cluster_points.shape[0] > 0:
                             new_protos.append(cluster_points.mean(dim=0))
+                        # if cluster_points.shape[0] > 0:
+                        #     # 1. 求均值 (此时模长会变小)
+                        #     avg_proto = cluster_points.mean(dim=0)
+                        #     # 2. 【关键修复】重新归一化，将其推回超球面表面！
+                        #     avg_proto = F.normalize(
+                        #         avg_proto.unsqueeze(0), p=2, dim=1).squeeze(0)
+                        #     new_protos.append(avg_proto)
 
                     compressed_protos = torch.stack(new_protos)
                 else:

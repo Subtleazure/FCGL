@@ -47,7 +47,7 @@ def start(args, fcgl_dataset, clients, server, message_pool, device):
             self.log.flush()
 
     # 确定日志文件名
-    log_filename = f"./FCGL/logs/log_{args.dataset}.txt"
+    log_filename = f"/data1/liujiaqi/FCGL_logs/log_{args.dataset}.txt"
     # 如果你想每次运行都覆盖旧日志，可以用 "w" 模式，或者在这里先删除旧文件
     sys.stdout = Logger(log_filename)
     # -----------------------
