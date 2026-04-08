@@ -103,7 +103,10 @@ if __name__ == "__main__":
     print("gene:", args.gene)
     print("attention:", args.alpha_at)
     print("lam_feat:", args.lam_feat)
-    print("lam_re_hard:", args.lam_re_hard)
+    if args.lam_re_hard > 0:
+        print("lam_re_hard:", args.lam_re_hard)
+    else:
+        print("lam_re_hard disabled")
     print("T:", args.T)
     print("lam_re_soft:", args.lam_re_soft)
     print("shuffle_task:", args.shuffle_task)

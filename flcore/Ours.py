@@ -38,7 +38,8 @@ class OursClient(BaseClient):
 
     def get_task_num_samples(self, task_id):
         task = self.data["task"][task_id]
-        task_mask = task["train_mask"] | task["val_mask"] | task["test_mask"]
+        # task_mask = task["train_mask"] | task["val_mask"] | task["test_mask"]
+        task_mask = task["train_mask"]
         return task_mask.sum()
 
     def execute(self, task_id, round_id):
@@ -127,13 +128,14 @@ class OursClient(BaseClient):
 
                     # 【修改 3】：完全相信 Golden Logits，弱化甚至关闭 Hard CE
                     # Hard CE 会因为长程特征漂移导致冲突，而 Soft KL 包含的暗知识才是防遗忘的神器
-                    loss_replay_hard = self.loss_fn(
-                        student_logits_proto, p_labels)
+                    if self.args.lam_re_hard > 0:
+                        loss_replay_hard = self.loss_fn(
+                            student_logits_proto, p_labels)
 
-                    # student_logits_proto = student_logits_proto - \
-                    #     student_logits_proto.mean(dim=1, keepdim=True)
-                    # p_golden_logits = p_golden_logits - \
-                    #     p_golden_logits.mean(dim=1, keepdim=True)
+                    student_logits_proto = student_logits_proto - \
+                        student_logits_proto.mean(dim=1, keepdim=True)
+                    p_golden_logits = p_golden_logits - \
+                        p_golden_logits.mean(dim=1, keepdim=True)
 
                     T = self.args.T
                     loss_replay_soft = F.kl_div(
@@ -143,9 +145,46 @@ class OursClient(BaseClient):
                     ) * (T * T)
 
                     # 参数建议：将拉锯战交给软标签。Hard CE降为 0.5 或者 0.0
-                    loss += self.args.lam_re_hard * loss_replay_hard + \
-                        self.args.lam_re_soft * loss_replay_soft
-                    # loss += self.args.lam_re_soft * loss_replay_soft
+                    if self.args.lam_re_hard > 0:
+                        loss += self.args.lam_re_hard * loss_replay_hard + \
+                            self.args.lam_re_soft * loss_replay_soft
+                    else:
+                        loss += self.args.lam_re_soft * loss_replay_soft
+
+            # if task_id > 0 and pseudo_data is not None and self.args.gene:
+            #     p_features_all, p_labels_all, p_golden_logits_all = pseudo_data
+
+            #     p_features = p_features_all.to(self.device)
+            #     p_labels = p_labels_all.to(self.device)
+            #     p_golden_logits = p_golden_logits_all.to(self.device)
+
+            #     student_logits_proto = self.local_model.classifier(
+            #         p_features)
+
+            #     # 【修改 3】：完全相信 Golden Logits，弱化甚至关闭 Hard CE
+            #     # Hard CE 会因为长程特征漂移导致冲突，而 Soft KL 包含的暗知识才是防遗忘的神器
+            #     if self.args.lam_re_hard > 0:
+            #         loss_replay_hard = self.loss_fn(
+            #             student_logits_proto, p_labels)
+
+            #         student_logits_proto = student_logits_proto - \
+            #             student_logits_proto.mean(dim=1, keepdim=True)
+            #         p_golden_logits = p_golden_logits - \
+            #             p_golden_logits.mean(dim=1, keepdim=True)
+
+            #     T = self.args.T
+            #     loss_replay_soft = F.kl_div(
+            #         F.log_softmax(student_logits_proto / T, dim=1),
+            #         F.softmax(p_golden_logits / T, dim=1),
+            #         reduction='batchmean'
+            #     ) * (T * T)
+
+            #     # 参数建议：将拉锯战交给软标签。Hard CE降为 0.5 或者 0.0
+            #     if self.args.lam_re_hard > 0:
+            #         loss += self.args.lam_re_hard * loss_replay_hard + \
+            #             self.args.lam_re_soft * loss_replay_soft
+            #     else:
+            #         loss += self.args.lam_re_soft * loss_replay_soft
 
             # --- 反向传播 ---
             if round_id % 10 == 0 and self.args.debug:
@@ -153,11 +192,16 @@ class OursClient(BaseClient):
 
                 # 假设你定义了这两个 loss (如果没有这部分，改成你实际的名字)
                 feat_val = loss_feat_stability.item() if 'loss_feat_stability' in locals() else 0
-                # replay_hard_val = loss_replay_hard.item() if 'loss_replay_hard' in locals() else 0
+                if self.args.lam_re_hard > 0:
+                    replay_hard_val = loss_replay_hard.item() if 'loss_replay_hard' in locals() else 0
                 replay_soft_val = loss_replay_soft.item() if 'loss_replay_soft' in locals() else 0
 
-                print(
-                    f"[DEBUG] Client {self.client_id} Task {task_id} | CE: {ce_val:.4f} | Feat: {feat_val:.4f} | Replay Soft: {replay_soft_val:.4f}")
+                if self.args.lam_re_hard > 0:
+                    print(
+                        f"[DEBUG] Client {self.client_id} Task {task_id} | CE: {ce_val:.4f} | Feat: {feat_val:.4f} | Replay Hard: {replay_hard_val:.4f} | Replay Soft: {replay_soft_val:.4f}")
+                else:
+                    print(
+                        f"[DEBUG] Client {self.client_id} Task {task_id} | CE: {ce_val:.4f} | Feat: {feat_val:.4f} | Replay Soft: {replay_soft_val:.4f}")
             loss.backward()
 
             # --- NaN 探针 ---
@@ -226,7 +270,8 @@ class OursClient(BaseClient):
             with torch.no_grad():
                 _, z_tilde, _, _ = self.local_model.forward(task_data)
                 labels = whole_data.y
-                mask = task["train_mask"] | task["val_mask"] | task["test_mask"]
+                # mask = task["train_mask"] | task["val_mask"] | task["test_mask"]
+                mask = task["train_mask"]
                 z_curr = z_tilde[mask]
                 y_curr = labels[mask]
 
@@ -495,7 +540,7 @@ class OursServer(BaseServer):
                     }
 
             # 4. 准备下发给 Client 的 Pseudo Data
-            self.pseudo_data = self.prepare_data()
+            # self.pseudo_data = self.prepare_data()
 
     def prepare_data(self):
         """Flatten the dictionary into (Features, Labels, Logits) for the clients"""
@@ -506,22 +551,37 @@ class OursServer(BaseServer):
         if len(self.global_memory_bank) == 0:
             return None
 
-        # 将字典解包成三个并列的 Tensor
+        min_protos = min([data["features"].shape[0]
+                         for data in self.global_memory_bank.values()])
+        if self.args.debug:
+            print(
+                f"[INFO] Preparing Pseudo Data: Each class will contribute {min_protos} prototypes to ensure balance.")
+            max_protos = max([data["features"].shape[0]
+                              for data in self.global_memory_bank.values()])
+            print(
+                f"[INFO] Max prototypes available for any class: {max_protos}.")
         for c, data_dict in self.global_memory_bank.items():
             protos = data_dict["features"]
             g_logits = data_dict["logits"]
-            num_protos = protos.shape[0]
 
-            c_tensor = torch.full((num_protos,), c, dtype=torch.long)
+            # 【核心】：随机打乱抽样！每一轮抽到的索引都不一样！
+            perm = torch.randperm(protos.shape[0])
+            idx = perm[:min_protos]
 
-            features_list.append(protos)
+            balanced_protos = protos[idx]
+            balanced_logits = g_logits[idx]
+
+            c_tensor = torch.full((min_protos,), c, dtype=torch.long)
+
+            features_list.append(balanced_protos)
             labels_list.append(c_tensor)
-            logits_list.append(g_logits)
+            logits_list.append(balanced_logits)
 
-        # 拼接并返回，供客户端在蒸馏时解包使用
         return torch.cat(features_list), torch.cat(labels_list), torch.cat(logits_list)
 
     def send_message(self):
+        self.pseudo_data = self.prepare_data()
+
         self.message_pool["server"] = {
             "weight": list(self.global_model.parameters()),
             "old_global_model": self.old_global_model,

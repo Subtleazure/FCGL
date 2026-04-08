@@ -65,10 +65,10 @@ parser.add_argument("--gene", type=bool, default=True)
 parser.add_argument("--debug", type=bool, default=True)
 parser.add_argument("--save", type=bool, default=True)
 
-parser.add_argument("--lam_feat", type=float, default=2.0)
-parser.add_argument("--lam_re_hard", type=float, default=1.0)
+parser.add_argument("--lam_feat", type=float, default=5.0)
+parser.add_argument("--lam_re_hard", type=float, default=0.0)
 parser.add_argument("--T", type=float, default=2.0)
-parser.add_argument("--lam_re_soft", type=float, default=2.0)
+parser.add_argument("--lam_re_soft", type=float, default=5.0)
 
 parser.add_argument("--num_rounds_per_task", type=int, default=80)
 
